@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import VoiceSelector from "./VoiceSelector";
 import AudioPlayer from "./AudioPlayer";
 import { generateSpeech, generateSpeechSimple } from "@/lib/speechUtils";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { Wand2 } from "lucide-react";
 
 interface TextToSpeechProps {
