@@ -6,13 +6,13 @@ import { cn } from "@/lib/utils";
 
 interface VoiceSelectorProps {
   onVoiceSelect: (voiceId: string) => void;
-  selectedVoiceId?: string;
+  selectedVoice?: Voice;
   className?: string;
 }
 
 const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   onVoiceSelect,
-  selectedVoiceId,
+  selectedVoice,
   className,
 }) => {
   const [voices, setVoices] = useState<Voice[]>([]);
@@ -26,8 +26,8 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
         setVoices(availableVoices);
         
         // Auto-select the first voice if none is selected
-        if (!selectedVoiceId && availableVoices.length > 0) {
-          onVoiceSelect(availableVoices[0].id);
+        if (!selectedVoice && availableVoices.length > 0) {
+          onVoiceSelect(availableVoices[0]);
         }
       } catch (error) {
         console.error("Failed to load voices:", error);
@@ -37,7 +37,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
     };
 
     loadVoices();
-  }, [onVoiceSelect, selectedVoiceId]);
+  }, [onVoiceSelect, selectedVoice]);
 
   // Group voices by language for better organization
   const groupedVoices = voices.reduce<Record<string, Voice[]>>((groups, voice) => {
@@ -52,7 +52,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   return (
     <div className={cn("space-y-2", className)}>
       <Select
-        value={selectedVoiceId}
+        value={selectedVoice?.id}
         onValueChange={onVoiceSelect}
         disabled={loading}
       >
@@ -72,7 +72,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
                   className="cursor-pointer transition-colors"
                 >
                   <div className="flex flex-col">
-                    <span>{voice.name}</span>
+                    <span>{voice.id}</span>
                     <span className="text-xs text-muted-foreground">
                       {voice.localService ? "Local" : "Network"} · {voice.lang}
                     </span>

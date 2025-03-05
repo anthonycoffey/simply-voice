@@ -15,7 +15,7 @@ interface TextToSpeechProps {
 
 const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
   const [text, setText] = useState("");
-  const [selectedVoiceId, setSelectedVoiceId] = useState<string>("");
+  const [selectedVoice, setSelectedVoice] = useState(null);
   const [audioUrl, setAudioUrl] = useState<string>("");
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -30,7 +30,7 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
       return;
     }
 
-    if (!selectedVoiceId) {
+    if (!selectedVoice) {
       toast.error("Please select a voice");
       return;
     }
@@ -39,7 +39,7 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
 
     try {
       // First attempt to generate with audio capture
-      const { audio, url } = await generateSpeech(text, selectedVoiceId);
+      const { audio, url } = await generateSpeech(text, selectedVoice.id, selectedVoice.lang);
       setAudioBlob(audio);
       setAudioUrl(url);
       toast.success("Audio generated successfully");
@@ -49,7 +49,7 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
       // Fallback to simple speech generation (no audio capture)
       try {
         toast.info("Using simplified audio generation...");
-        await generateSpeechSimple(text, selectedVoiceId);
+        await generateSpeechSimple(text, selectedVoice.id);
         toast.success("Speech played successfully");
       } catch (fallbackError) {
         console.error("Error with fallback speech generation:", fallbackError);
@@ -88,15 +88,15 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
             Select a voice
           </label>
           <VoiceSelector
-            selectedVoiceId={selectedVoiceId}
-            onVoiceSelect={setSelectedVoiceId}
+            selectedVoice={selectedVoice}
+            onVoiceSelect={setSelectedVoice}
           />
         </div>
       </div>
 
       <Button
         onClick={handleGenerate}
-        disabled={isGenerating || !text.trim() || !selectedVoiceId}
+        disabled={isGenerating || !text.trim() || !selectedVoice}
         className="w-full gap-2 bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
       >
         {isGenerating ? (
@@ -119,6 +119,7 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
           className="mt-4"
         />
       )}
+
     </div>
   );
 };

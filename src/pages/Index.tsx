@@ -37,9 +37,8 @@ const Index = () => {
         </div>
 
         <footer className="mt-10 text-center text-sm text-muted-foreground">
-          <p>
-            Uses the Web Speech API for high-quality text-to-speech conversion.
-          </p>
+          Created by Anthony Coffey <br />
+          <a href="https://coffey.codes" className="text-primary hover:underline">coffey.codes</a>
         </footer>
       </div>
     </div>
