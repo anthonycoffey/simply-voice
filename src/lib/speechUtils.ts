@@ -66,34 +66,6 @@ export const generateSpeech = async (
   }
 };
 
-// Simplified function that just plays audio directly
-export const generateSpeechSimple = async (
-  text: string,
-  voiceId: string
-): Promise<void> => {
-  try {
-    const { url } = await generateSpeech(text, voiceId);
-    const audio = new Audio(url);
-    
-    return new Promise((resolve, reject) => {
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        resolve();
-      };
-      
-      audio.onerror = (error) => {
-        URL.revokeObjectURL(url);
-        reject(error);
-      };
-      
-      audio.play();
-    });
-  } catch (error) {
-    console.error("Error playing speech:", error);
-    throw error;
-  }
-};
-
 // Download the audio blob as a file
 export const downloadAudio = (
   blob: Blob,

@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import VoiceSelector from "./VoiceSelector";
 import AudioPlayer from "./AudioPlayer";
-import { generateSpeech, generateSpeechSimple } from "@/lib/speechUtils";
+import { generateSpeech } from "@/lib/speechUtils";
 import { toast } from "sonner";
 import { Wand2 } from "lucide-react";
 
@@ -45,16 +45,6 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
       toast.success("Audio generated successfully");
     } catch (mainError) {
       console.error("Error generating speech with audio capture:", mainError);
-      
-      // Fallback to simple speech generation (no audio capture)
-      try {
-        toast.info("Using simplified audio generation...");
-        await generateSpeechSimple(text, selectedVoice.id);
-        toast.success("Speech played successfully");
-      } catch (fallbackError) {
-        console.error("Error with fallback speech generation:", fallbackError);
-        toast.error("Failed to generate speech. Please try again.");
-      }
     } finally {
       setIsGenerating(false);
     }
