@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,7 +6,8 @@ import VoiceSelector from "./VoiceSelector";
 import AudioPlayer from "./AudioPlayer";
 import { generateSpeech } from "@/lib/speechUtils";
 import { toast } from "sonner";
-import { Wand2 } from "lucide-react";
+import { Wand2, Save } from "lucide-react";
+import { useTTSHistory, useSupabaseStorage } from "@/lib/hooks/useSupabase";
 
 interface TextToSpeechProps {
   className?: string;
@@ -19,7 +19,12 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
   const [audioUrl, setAudioUrl] = useState<string>("");
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Supabase hooks
+  const { addHistoryItem } = useTTSHistory();
+  const { uploadAudio } = useSupabaseStorage();
 
   const handleGenerate = async () => {
     if (!text.trim()) {
@@ -39,7 +44,12 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
 
     try {
       // First attempt to generate with audio capture
-      const { audio, url } = await generateSpeech(text, selectedVoice.id, selectedVoice.lang);
+      const cleanedText = text.replace(/\n/g, " ").trim();
+      const { audio, url } = await generateSpeech(
+        text,
+        selectedVoice.id,
+        selectedVoice.lang
+      );
       setAudioBlob(audio);
       setAudioUrl(url);
       toast.success("Audio generated successfully");
@@ -47,6 +57,36 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
       console.error("Error generating speech with audio capture:", mainError);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleSaveToHistory = async () => {
+    if (!audioBlob || !selectedVoice) return;
+
+    setIsSaving(true);
+
+    try {
+      // Upload to Supabase storage
+      const fileName = `speech_${selectedVoice.id}_${Date.now()}`;
+      const { success, publicUrl } = await uploadAudio(audioBlob, fileName);
+
+      if (success && publicUrl) {
+        // Save to history
+        await addHistoryItem({
+          text_content: text,
+          voice_id: selectedVoice.id,
+          audio_url: publicUrl,
+        });
+
+        toast.success("Saved to your history");
+      } else {
+        throw new Error("Failed to upload audio");
+      }
+    } catch (error) {
+      console.error("Error saving to history:", error);
+      toast.error("Failed to save to history");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -84,22 +124,42 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
         </div>
       </div>
 
-      <Button
-        onClick={handleGenerate}
-        disabled={isGenerating || !text.trim() || !selectedVoice}
-        className="w-full gap-2 bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
-      >
-        {isGenerating ? (
-          <>
-            <div className="animate-pulse-soft">Generating Audio</div>
-          </>
-        ) : (
-          <>
-            <Wand2 className="h-4 w-4" />
-            Generate Speech
-          </>
+      <div className="flex gap-3">
+        <Button
+          onClick={handleGenerate}
+          disabled={isGenerating || !text.trim() || !selectedVoice}
+          className="flex-1 gap-2 bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+        >
+          {isGenerating ? (
+            <>
+              <div className="animate-pulse-soft">Generating Audio</div>
+            </>
+          ) : (
+            <>
+              <Wand2 className="h-4 w-4" />
+              Generate Speech
+            </>
+          )}
+        </Button>
+
+        {audioBlob && (
+          <Button
+            onClick={handleSaveToHistory}
+            disabled={isSaving || !audioBlob}
+            variant="secondary"
+            className="gap-2 transition-all"
+          >
+            {isSaving ? (
+              <div className="animate-pulse-soft">Saving...</div>
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                Save to History
+              </>
+            )}
+          </Button>
         )}
-      </Button>
+      </div>
 
       {audioUrl && audioBlob && (
         <AudioPlayer
@@ -109,7 +169,6 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
           className="mt-4"
         />
       )}
-
     </div>
   );
 };

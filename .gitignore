@@ -26,3 +26,4 @@ dist-ssr
 
 credentials.json
 server/service-account.json
+.env
