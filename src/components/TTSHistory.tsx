@@ -88,14 +88,8 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
     }
   };
 
-  const handleAudioError = (id: string) => {
-    console.log(`Audio error for item ${id}`);
-    setAudioErrors((prev) => ({ ...prev, [id]: true }));
-  };
-  
-  const handleAudioLoadFail = (id: string) => {
-    handleAudioError(id);
-  };
+
+
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -219,7 +213,6 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
                       audioUrl={item.audio_url}
                       filename={`speech_${item.text_content.substring(0, 20).replace(/\s+/g, "_")}.wav`}
                       className="bg-secondary/20"
-                      onError={() => handleAudioLoadFail(item.id)}
                     />
                   </div>
                 )}

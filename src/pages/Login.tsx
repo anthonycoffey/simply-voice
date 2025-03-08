@@ -59,7 +59,7 @@ const Login = () => {
                 },
               }}
               theme="default"
-              providers={['google', 'github']}
+              providers={['google']}
               redirectTo={`${window.location.origin}/dashboard`}
             />
           </CardContent>
