@@ -111,6 +111,38 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const handleDownload = () => {
     if (audioBlob) {
       downloadAudio(audioBlob, filename);
+    } else if (audioUrl) {
+      // If no blob is present, fetch the file first to ensure direct download
+      fetch(audioUrl)
+        .then(response => response.blob())
+        .then(blob => {
+          // Create a blob URL and use it for download
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = filename;
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          
+          // Clean up
+          setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+          }, 100);
+        })
+        .catch(error => {
+          console.error('Error downloading audio:', error);
+          // Fallback to direct URL download if fetch fails
+          const a = document.createElement('a');
+          a.href = audioUrl;
+          a.download = filename;
+          a.target = '_blank'; // This helps in some browsers
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        });
     }
   };
 
@@ -237,8 +269,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
           </div>
         </div>
         
-        {/* Download button */}
-        {audioBlob && (
+        {/* Download button - now shows whenever audioUrl is available */}
+        {audioUrl && (
           <Button
             size="sm"
             variant="ghost"
