@@ -1,7 +1,6 @@
-
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Play, Pause, Download, Volume2, SkipBack, SkipForward } from "lucide-react";
+import { Play, Pause, Download, Volume2, VolumeX, Volume1, SkipBack, SkipForward } from "lucide-react";
 import AudioWaveform from "./AudioWaveform";
 import { cn } from "@/lib/utils";
 import { downloadAudio } from "@/lib/speechUtils";
@@ -12,6 +11,7 @@ interface AudioPlayerProps {
   audioBlob?: Blob;
   className?: string;
   filename?: string;
+  compact?: boolean;
 }
 
 const AudioPlayer: React.FC<AudioPlayerProps> = ({
@@ -19,13 +19,17 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
   audioBlob,
   className,
   filename = "speech.wav",
+  compact = false,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(0.8);
+  const [isMuted, setIsMuted] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animationRef = useRef<number | null>(null);
 
+  // Initialize audio element when the URL changes
   useEffect(() => {
     if (!audioUrl) {
       setIsPlaying(false);
@@ -34,16 +38,24 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
       return;
     }
 
-    // Create a new audio element when the URL changes
+    // Create a new audio element
     const audio = new Audio(audioUrl);
     audioRef.current = audio;
+    
+    // Set initial volume
+    audio.volume = isMuted ? 0 : volume;
 
     // Add event listeners
-    audio.addEventListener("ended", () => setIsPlaying(false));
-    audio.addEventListener("pause", () => setIsPlaying(false));
-    audio.addEventListener("play", () => setIsPlaying(true));
-    audio.addEventListener("loadedmetadata", () => setDuration(audio.duration));
+    const handleEnded = () => setIsPlaying(false);
+    const handlePause = () => setIsPlaying(false);
+    const handlePlay = () => setIsPlaying(true);
+    const handleLoadedMetadata = () => setDuration(audio.duration);
 
+    audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+  
     // Clean up on unmount
     return () => {
       if (animationRef.current) {
@@ -51,18 +63,26 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
       }
       audio.pause();
       audio.src = "";
-      audio.removeEventListener("ended", () => setIsPlaying(false));
-      audio.removeEventListener("pause", () => setIsPlaying(false));
-      audio.removeEventListener("play", () => setIsPlaying(true));
-      audio.removeEventListener("loadedmetadata", () => setDuration(audio.duration));
+      audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
     };
   }, [audioUrl]);
+  
+  // Update volume when volume or mute state changes
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : volume;
+    }
+  }, [volume, isMuted]);
 
-  const updateTimeDisplay = () => {
+  // Update time display animation
+  const updateTimeDisplay = useCallback(() => {
     if (!audioRef.current) return;
     setCurrentTime(audioRef.current.currentTime);
     animationRef.current = requestAnimationFrame(updateTimeDisplay);
-  };
+  }, []);
 
   useEffect(() => {
     if (isPlaying) {
@@ -70,15 +90,21 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
     } else if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
     }
-  }, [isPlaying]);
+  }, [isPlaying, updateTimeDisplay]);
 
-  const togglePlay = () => {
+  // Play/pause toggle with error handling
+  const togglePlay = async () => {
     if (!audioRef.current) return;
 
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play();
+    try {
+      if (isPlaying) {
+        audioRef.current.pause();
+      } else {
+        // Using try/catch to handle autoplay restrictions
+        await audioRef.current.play();
+      }
+    } catch (error) {
+      console.error('Error toggling play state:', error);
     }
   };
 
@@ -112,6 +138,23 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
   };
+  
+  const handleVolumeChange = (newVolume: number[]) => {
+    setVolume(newVolume[0]);
+    if (isMuted && newVolume[0] > 0) {
+      setIsMuted(false);
+    }
+  };
+  
+  const toggleMute = () => {
+    setIsMuted(prev => !prev);
+  };
+  
+  const getVolumeIcon = () => {
+    if (isMuted || volume === 0) return <VolumeX className={compact ? "h-3 w-3" : "h-4 w-4"} />;
+    if (volume < 0.5) return <Volume1 className={compact ? "h-3 w-3" : "h-4 w-4"} />;
+    return <Volume2 className={compact ? "h-3 w-3" : "h-4 w-4"} />;
+  };
 
   if (!audioUrl) {
     return null;
@@ -126,22 +169,26 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
     >
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
+          {/* Skip backward button */}
           <Button
             size="icon"
             variant="secondary"
             className="h-8 w-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
             onClick={skipBackward}
-            aria-label="Skip backward"
+            aria-label="Skip backward 5 seconds"
+            title="Skip backward 5 seconds"
           >
             <SkipBack className="h-4 w-4" />
           </Button>
           
+          {/* Play/pause button */}
           <Button
             size="icon"
             variant="secondary"
             className="h-8 w-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
             onClick={togglePlay}
             aria-label={isPlaying ? "Pause" : "Play"}
+            title={isPlaying ? "Pause" : "Play"}
           >
             {isPlaying ? (
               <Pause className="h-4 w-4" />
@@ -150,33 +197,63 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
             )}
           </Button>
           
+          {/* Skip forward button */}
           <Button
             size="icon"
             variant="secondary"
             className="h-8 w-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
             onClick={skipForward}
-            aria-label="Skip forward"
+            aria-label="Skip forward 5 seconds"
+            title="Skip forward 5 seconds"
           >
             <SkipForward className="h-4 w-4" />
           </Button>
           
-          <div className="flex items-center gap-1 ml-2">
-            <Volume2 className="h-4 w-4 text-primary" />
-            <AudioWaveform isPlaying={isPlaying} />
+          <div className="flex items-center gap-3 ml-2">
+            {/* Mute toggle button */}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 text-primary"
+              onClick={toggleMute}
+              aria-label={isMuted ? "Unmute" : "Mute"}
+              title={isMuted ? "Unmute" : "Mute"}
+            >
+              {getVolumeIcon()}
+            </Button>
+            
+            {/* Inline volume slider */}
+            <div className="w-24">
+              <Slider
+                value={[isMuted ? 0 : volume]}
+                max={1}
+                step={0.01}
+                onValueChange={handleVolumeChange}
+                aria-label="Adjust volume level"
+              />
+            </div>
+            
+            {/* <AudioWaveform isPlaying={isPlaying} /> */}
           </div>
         </div>
         
-        <Button
-          size="sm"
-          variant="ghost"
-          className="gap-1 text-xs"
-          onClick={handleDownload}
-        >
-          <Download className="h-3.5 w-3.5" />
-          Download
-        </Button>
+        {/* Download button */}
+        {audioBlob && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1 text-xs"
+            onClick={handleDownload}
+            aria-label="Download audio"
+            title="Download audio"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download
+          </Button>
+        )}
       </div>
       
+      {/* Seek control */}
       <div className="w-full px-1">
         <Slider 
           value={[currentTime]} 
@@ -184,6 +261,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
           step={0.1}
           onValueChange={handleSeek}
           className="my-1"
+          aria-label="Seek through audio"
         />
         <div className="flex justify-between text-xs text-muted-foreground mt-1">
           <span>{formatTime(currentTime)}</span>
