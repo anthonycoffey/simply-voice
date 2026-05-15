@@ -1,12 +1,12 @@
 import React from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useSessionContext } from '@supabase/auth-helpers-react';
+import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ArrowRight, LogIn } from "lucide-react";
 
 const Index = () => {
-  const { session } = useSessionContext();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   return (
@@ -19,19 +19,19 @@ const Index = () => {
               Simply Voice
             </span>
           </h1>
-          
+
           <div className="flex items-center gap-2">
-            {session ? (
-              <Button 
-                variant="default" 
+            {user ? (
+              <Button
+                variant="default"
                 onClick={() => navigate('/dashboard')}
               >
                 Dashboard
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             ) : (
-              <Button 
-                variant="default" 
+              <Button
+                variant="default"
                 onClick={() => navigate('/login')}
               >
                 Sign in
@@ -65,10 +65,10 @@ const Index = () => {
                 className="animate-slide-up animation-delay-200"
                 onClick={() => navigate('/login')}
               >
-                Get Started 
+                Get Started
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
-              {!session && (
+              {!user && (
                 <Button
                   variant="outline"
                   size="lg"
@@ -100,7 +100,7 @@ const Index = () => {
                 description: "Save your audio files in high-quality MP3 format with one click."
               }
             ].map((feature, idx) => (
-              <div 
+              <div
                 key={idx}
                 className={cn(
                   "p-6 rounded-lg border border-border/50 bg-card/50",

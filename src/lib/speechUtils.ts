@@ -1,7 +1,4 @@
-/**
- * Frontend utility functions for working with the Google Text-to-Speech API
- * This code runs in the browser and communicates with your backend
- */
+import { auth } from './firebase';
 
 export interface Voice {
   id: string;
@@ -11,24 +8,29 @@ export interface Voice {
   naturalSampleRateHertz: number;
 }
 
-// Get all available voices from your backend
+// Attach the current user's Firebase ID token to every API request.
+const authHeaders = async (): Promise<HeadersInit> => {
+  const token = await auth.currentUser?.getIdToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
 export const getVoices = async (): Promise<Voice[]> => {
   try {
-    const response = await fetch('/api/tts/voices');
-    
+    const response = await fetch('/api/tts/voices', {
+      headers: await authHeaders(),
+    });
+
     if (!response.ok) {
       throw new Error(`Failed to fetch voices: ${response.statusText}`);
     }
-    
-    const voices = await response.json();
-    return voices;
+
+    return response.json();
   } catch (error) {
     console.error("Error fetching voices:", error);
     return [];
   }
 };
 
-// Generate speech from text via your backend
 export const generateSpeech = async (
   text: string,
   voiceId: string,
@@ -36,41 +38,24 @@ export const generateSpeech = async (
   speakingRate = 1,
   pitch = 0
 ): Promise<{ audio: Blob; url: string }> => {
-  try {
-    const response = await fetch('/api/tts/synthesize', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        text,
-        voiceId,
-        lang,
-        speakingRate,
-        pitch
-      }),
-    });
+  const response = await fetch('/api/tts/synthesize', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(await authHeaders()),
+    },
+    body: JSON.stringify({ text, voiceId, lang, speakingRate, pitch }),
+  });
 
-    if (!response.ok) {
-      throw new Error(`Failed to generate speech: ${response.statusText}`);
-    }
-
-    // Get the audio binary data
-    const audioBlob = await response.blob();
-    const audioUrl = URL.createObjectURL(audioBlob);
-    
-    return { audio: audioBlob, url: audioUrl };
-  } catch (error) {
-    console.error("Error generating speech:", error);
-    throw error;
+  if (!response.ok) {
+    throw new Error(`Failed to generate speech: ${response.statusText}`);
   }
+
+  const audioBlob = await response.blob();
+  return { audio: audioBlob, url: URL.createObjectURL(audioBlob) };
 };
 
-// Download the audio blob as a file
-export const downloadAudio = (
-  blob: Blob,
-  filename = "speech.wav"
-): string => {
+export const downloadAudio = (blob: Blob, filename = "speech.wav"): string => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

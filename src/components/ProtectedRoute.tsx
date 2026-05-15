@@ -1,6 +1,6 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
-import { useSessionContext } from '@supabase/auth-helpers-react';
+import { useAuth } from '@/lib/auth';
 import { Loader2 } from 'lucide-react';
 
 interface ProtectedRouteProps {
@@ -8,13 +8,13 @@ interface ProtectedRouteProps {
   redirectTo?: string;
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ 
-  children, 
-  redirectTo = '/login' 
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
+  children,
+  redirectTo = '/login',
 }) => {
-  const { session, isLoading } = useSessionContext();
+  const { user, loading } = useAuth();
 
-  if (isLoading) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -22,7 +22,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     );
   }
 
-  if (!session) {
+  if (!user) {
     return <Navigate to={redirectTo} replace />;
   }
 

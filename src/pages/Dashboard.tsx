@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { useSessionContext, useUser } from "@supabase/auth-helpers-react";
+import { useAuth } from "@/lib/auth";
 import TextToSpeech from "@/components/TextToSpeech";
 import TTSHistory from "@/components/TTSHistory";
 import { Button } from "@/components/ui/button";
@@ -8,13 +8,12 @@ import { cn } from "@/lib/utils";
 import { LogOut, User, Mic, History } from "lucide-react";
 
 const Dashboard = () => {
-  const { supabaseClient } = useSessionContext();
-  const user = useUser();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = React.useState("convert");
 
   const handleSignOut = async () => {
-    await supabaseClient.auth.signOut();
+    await signOut();
     navigate("/");
   };
 

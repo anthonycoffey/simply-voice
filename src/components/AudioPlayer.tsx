@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Play, Pause, Download, Volume2, VolumeX, Volume1, SkipBack, SkipForward } from "lucide-react";
-import AudioWaveform from "./AudioWaveform";
 import { cn } from "@/lib/utils";
 import { downloadAudio } from "@/lib/speechUtils";
 import { Slider } from "@/components/ui/slider";
@@ -12,7 +11,12 @@ interface AudioPlayerProps {
   className?: string;
   filename?: string;
   compact?: boolean;
+  onError?: () => void;
 }
+
+// Only one player audible at a time — starting one pauses any other.
+type ActivePlayer = { pause: () => Promise<void> };
+let activePlayer: ActivePlayer | null = null;
 
 const AudioPlayer: React.FC<AudioPlayerProps> = ({
   audioUrl,
@@ -20,103 +24,130 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
   className,
   filename = "speech.wav",
   compact = false,
+  onError,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const animationRef = useRef<number | null>(null);
 
-  // Initialize audio element when the URL changes
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playPromiseRef = useRef<Promise<void> | null>(null);
+  const animationRef = useRef<number | null>(null);
+  const selfRef = useRef<ActivePlayer | null>(null);
+
+  // Wait for any in-flight play() before pausing — avoids the AbortError that
+  // corrupts the audio element's internal state.
+  const safePause = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (playPromiseRef.current) {
+      try { await playPromiseRef.current; } catch { /* AbortError is expected */ }
+    }
+    if (!audio.paused) audio.pause();
+    if (activePlayer === selfRef.current) activePlayer = null;
+  }, []);
+
+  // Stable identity exposed to the module-level registry.
   useEffect(() => {
-    if (!audioUrl) {
+    selfRef.current = { pause: safePause };
+    return () => {
+      if (activePlayer === selfRef.current) activePlayer = null;
+      selfRef.current = null;
+    };
+  }, [safePause]);
+
+  // When the source URL changes, stop cleanly and reset display state.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await safePause();
+      if (cancelled) return;
       setIsPlaying(false);
       setCurrentTime(0);
       setDuration(0);
-      return;
-    }
+    })();
+    return () => { cancelled = true; };
+  }, [audioUrl, safePause]);
 
-    // Create a new audio element
-    const audio = new Audio(audioUrl);
-    audioRef.current = audio;
-    
-    // Set initial volume
-    audio.volume = isMuted ? 0 : volume;
-
-    // Add event listeners
-    const handleEnded = () => setIsPlaying(false);
-    const handlePause = () => setIsPlaying(false);
-    const handlePlay = () => setIsPlaying(true);
-    const handleLoadedMetadata = () => setDuration(audio.duration);
-
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("pause", handlePause);
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-  
-    // Clean up on unmount
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-      audio.pause();
-      audio.src = "";
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("pause", handlePause);
-      audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-    };
-  }, [audioUrl]);
-  
-  // Update volume when volume or mute state changes
+  // Volume / mute side-effect.
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = isMuted ? 0 : volume;
     }
   }, [volume, isMuted]);
 
-  // Update time display animation
-  const updateTimeDisplay = useCallback(() => {
-    if (!audioRef.current) return;
-    setCurrentTime(audioRef.current.currentTime);
-    animationRef.current = requestAnimationFrame(updateTimeDisplay);
-  }, []);
-
+  // RAF tick for a smooth seek slider (timeupdate fires too slowly).
   useEffect(() => {
-    if (isPlaying) {
-      animationRef.current = requestAnimationFrame(updateTimeDisplay);
-    } else if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
+    if (!isPlaying) {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      return;
     }
-  }, [isPlaying, updateTimeDisplay]);
+    const tick = () => {
+      if (audioRef.current) setCurrentTime(audioRef.current.currentTime);
+      animationRef.current = requestAnimationFrame(tick);
+    };
+    animationRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+    };
+  }, [isPlaying]);
 
-  // Play/pause toggle with error handling
-  const togglePlay = async () => {
-    if (!audioRef.current) return;
+  // Unmount: release any active-player slot and stop playback safely.
+  useEffect(() => {
+    return () => {
+      void safePause();
+    };
+  }, [safePause]);
+
+  const togglePlay = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio || !audioUrl) return;
+
+    // Decide off the DOM, not React state — React state can lag the real audio.
+    if (!audio.paused) {
+      await safePause();
+      return;
+    }
+
+    // Pause any other instance before we start so two never play together.
+    if (activePlayer && activePlayer !== selfRef.current) {
+      await activePlayer.pause();
+    }
+    activePlayer = selfRef.current;
 
     try {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        // Using try/catch to handle autoplay restrictions
-        await audioRef.current.play();
+      const p = audio.play();
+      playPromiseRef.current = p;
+      await p;
+    } catch (error: unknown) {
+      const name = (error as { name?: string } | null)?.name;
+      // AbortError fires when play() is interrupted (pause, src swap, unmount).
+      // Anything else is a real failure — typically an expired/forbidden URL.
+      if (name !== 'AbortError') {
+        console.error('Audio playback error:', error);
+        onError?.();
       }
-    } catch (error) {
-      console.error('Error toggling play state:', error);
+      if (activePlayer === selfRef.current) activePlayer = null;
+    } finally {
+      playPromiseRef.current = null;
     }
-  };
+  }, [audioUrl, safePause, onError]);
 
   const handleDownload = () => {
     if (audioBlob) {
       downloadAudio(audioBlob, filename);
     } else if (audioUrl) {
-      // If no blob is present, fetch the file first to ensure direct download
       fetch(audioUrl)
         .then(response => response.blob())
         .then(blob => {
-          // Create a blob URL and use it for download
           const blobUrl = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = blobUrl;
@@ -124,8 +155,6 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
           a.style.display = 'none';
           document.body.appendChild(a);
           a.click();
-          
-          // Clean up
           setTimeout(() => {
             document.body.removeChild(a);
             URL.revokeObjectURL(blobUrl);
@@ -133,11 +162,10 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
         })
         .catch(error => {
           console.error('Error downloading audio:', error);
-          // Fallback to direct URL download if fetch fails
           const a = document.createElement('a');
           a.href = audioUrl;
           a.download = filename;
-          a.target = '_blank'; // This helps in some browsers
+          a.target = '_blank';
           a.style.display = 'none';
           document.body.appendChild(a);
           a.click();
@@ -155,33 +183,36 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   const skipBackward = () => {
     if (!audioRef.current) return;
-    audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 5);
-    setCurrentTime(audioRef.current.currentTime);
+    const newTime = Math.max(0, audioRef.current.currentTime - 5);
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
   };
 
   const skipForward = () => {
     if (!audioRef.current) return;
-    audioRef.current.currentTime = Math.min(duration, audioRef.current.currentTime + 5);
-    setCurrentTime(audioRef.current.currentTime);
+    const newTime = Math.min(duration, audioRef.current.currentTime + 5);
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
   };
 
   const formatTime = (time: number) => {
+    if (!Number.isFinite(time)) return '0:00';
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
   };
-  
+
   const handleVolumeChange = (newVolume: number[]) => {
     setVolume(newVolume[0]);
     if (isMuted && newVolume[0] > 0) {
       setIsMuted(false);
     }
   };
-  
+
   const toggleMute = () => {
     setIsMuted(prev => !prev);
   };
-  
+
   const getVolumeIcon = () => {
     if (isMuted || volume === 0) return <VolumeX className={compact ? "h-3 w-3" : "h-4 w-4"} />;
     if (volume < 0.5) return <Volume1 className={compact ? "h-3 w-3" : "h-4 w-4"} />;
@@ -199,9 +230,29 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
         className
       )}
     >
+      <audio
+        ref={audioRef}
+        src={audioUrl}
+        preload="metadata"
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => {
+          setIsPlaying(false);
+          if (activePlayer === selfRef.current) activePlayer = null;
+        }}
+        onLoadedMetadata={(e) => {
+          const d = (e.currentTarget as HTMLAudioElement).duration;
+          setDuration(Number.isFinite(d) ? d : 0);
+        }}
+        onError={() => {
+          setIsPlaying(false);
+          if (activePlayer === selfRef.current) activePlayer = null;
+          onError?.();
+        }}
+      />
+
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          {/* Skip backward button */}
           <Button
             size="icon"
             variant="secondary"
@@ -212,8 +263,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
           >
             <SkipBack className="h-4 w-4" />
           </Button>
-          
-          {/* Play/pause button */}
+
           <Button
             size="icon"
             variant="secondary"
@@ -228,8 +278,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
               <Play className="h-4 w-4 ml-0.5" />
             )}
           </Button>
-          
-          {/* Skip forward button */}
+
           <Button
             size="icon"
             variant="secondary"
@@ -240,9 +289,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
           >
             <SkipForward className="h-4 w-4" />
           </Button>
-          
+
           <div className="flex items-center gap-3 ml-2">
-            {/* Mute toggle button */}
             <Button
               size="icon"
               variant="ghost"
@@ -253,8 +301,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
             >
               {getVolumeIcon()}
             </Button>
-            
-            {/* Inline volume slider */}
+
             <div className="w-24">
               <Slider
                 value={[isMuted ? 0 : volume]}
@@ -264,12 +311,9 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 aria-label="Adjust volume level"
               />
             </div>
-            
-            {/* <AudioWaveform isPlaying={isPlaying} /> */}
           </div>
         </div>
-        
-        {/* Download button - now shows whenever audioUrl is available */}
+
         {audioUrl && (
           <Button
             size="sm"
@@ -284,11 +328,10 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
           </Button>
         )}
       </div>
-      
-      {/* Seek control */}
+
       <div className="w-full px-1">
-        <Slider 
-          value={[currentTime]} 
+        <Slider
+          value={[currentTime]}
           max={duration || 100}
           step={0.1}
           onValueChange={handleSeek}

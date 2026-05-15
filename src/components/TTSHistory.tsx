@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { useTTSHistory } from "@/lib/hooks/useSupabase";
-import { useSupabaseStorage } from "@/lib/hooks/useSupabase";
+import { useTTSHistory, useFirebaseStorage } from "@/lib/hooks/useFirebase";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Trash2, Clock, RefreshCw } from "lucide-react";
@@ -22,24 +21,9 @@ interface TTSHistoryProps {
 
 const ITEMS_PER_PAGE = 5;
 
-const extractFilePath = (url: string): string | null => {
-  try {
-    const match = url.match(
-      /(?:\/storage\/v1\/object\/sign\/tts-files\/)([^?]+)/
-    );
-    if (match && match[1]) {
-      return decodeURIComponent(match[1]);
-    }
-    return null;
-  } catch (e) {
-    console.error("Error extracting file path:", e);
-    return null;
-  }
-};
-
 const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
   const { history, loading, deleteHistoryItem, fetchHistory } = useTTSHistory();
-  const { refreshAudioUrl } = useSupabaseStorage();
+  const { refreshAudioUrl } = useFirebaseStorage();
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   const [audioErrors, setAudioErrors] = useState<Record<string, boolean>>({});
   const [currentPage, setCurrentPage] = useState(1);
@@ -49,27 +33,25 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
   const endIndex = startIndex + ITEMS_PER_PAGE;
   const currentItems = history.slice(startIndex, endIndex);
 
-  const handleDelete = async (id: string, audioUrl?: string | null) => {
-    // Pass both the item ID and audio URL to the delete function
-    const { success } = await deleteHistoryItem(id, audioUrl);
+  const handleDelete = async (id: string, audioPath?: string | null) => {
+    const { success } = await deleteHistoryItem(id, audioPath);
     if (success) {
       toast.success("Removed from history");
     }
   };
 
-  const handleRefreshUrl = async (id: string, audioUrl: string) => {
-    const filePath = extractFilePath(audioUrl);
-    if (!filePath) {
-      toast.error("Could not extract file path from URL");
+  const handleRefreshUrl = async (id: string, audioPath: string | null) => {
+    if (!audioPath) {
+      toast.error("No storage path available for this item");
       return;
     }
 
     setRefreshingIds((prev) => new Set(prev).add(id));
 
     try {
-      const { success, url } = await refreshAudioUrl(filePath);
+      const { success } = await refreshAudioUrl(audioPath);
 
-      if (success && url) {
+      if (success) {
         setAudioErrors((prev) => ({ ...prev, [id]: false }));
         toast.success("Audio URL refreshed");
         fetchHistory();
@@ -87,9 +69,6 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
       });
     }
   };
-
-
-
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -172,12 +151,12 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
                   </span>
                 </div>
               </div>
-              
+
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7 rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                onClick={() => handleDelete(item.id, item.audio_url)}
+                onClick={() => handleDelete(item.id, item.audio_path)}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
@@ -188,31 +167,32 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
                 {audioErrors[item.id] ? (
                   <div className="flex items-center justify-center gap-2 mt-2 p-2 bg-secondary/20 rounded-md">
                     <p className="text-xs text-muted-foreground">
-                      Audio URL expired
+                      Audio unavailable
                     </p>
                     <Button
                       variant="secondary"
                       size="sm"
                       className="h-6 px-2 text-xs"
                       disabled={refreshingIds.has(item.id)}
-                      onClick={() => handleRefreshUrl(item.id, item.audio_url!)}
+                      onClick={() => handleRefreshUrl(item.id, item.audio_path)}
                     >
                       {refreshingIds.has(item.id) ? (
                         <RefreshCw className="h-3 w-3 animate-spin" />
                       ) : (
                         <>
                           <RefreshCw className="h-3 w-3 mr-1" />
-                          Refresh
+                          Retry
                         </>
                       )}
                     </Button>
                   </div>
                 ) : (
                   <div className="mt-2">
-                    <AudioPlayer 
+                    <AudioPlayer
                       audioUrl={item.audio_url}
                       filename={`speech_${item.text_content.substring(0, 20).replace(/\s+/g, "_")}.wav`}
                       className="bg-secondary/20"
+                      onError={() => setAudioErrors((prev) => ({ ...prev, [item.id]: true }))}
                     />
                   </div>
                 )}
@@ -225,7 +205,7 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
           </div>
         ))}
       </div>
-      
+
       {totalPages > 1 && (
         <Pagination className="mt-4">
           <PaginationContent>
@@ -237,7 +217,7 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
                 }} />
               </PaginationItem>
             )}
-            
+
             {Array.from({ length: totalPages }).map((_, i) => (
               <PaginationItem key={i}>
                 <PaginationLink
@@ -252,7 +232,7 @@ const TTSHistory: React.FC<TTSHistoryProps> = ({ className }) => {
                 </PaginationLink>
               </PaginationItem>
             ))}
-            
+
             {currentPage < totalPages && (
               <PaginationItem>
                 <PaginationNext href="#" onClick={(e) => {

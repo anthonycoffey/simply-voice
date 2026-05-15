@@ -7,7 +7,7 @@ import AudioPlayer from "./AudioPlayer";
 import { generateSpeech } from "@/lib/speechUtils";
 import { toast } from "sonner";
 import { Wand2, Save } from "lucide-react";
-import { useTTSHistory, useSupabaseStorage } from "@/lib/hooks/useSupabase";
+import { useTTSHistory, useFirebaseStorage } from "@/lib/hooks/useFirebase";
 
 interface TextToSpeechProps {
   className?: string;
@@ -22,9 +22,8 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
   const [isSaving, setIsSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Supabase hooks
   const { addHistoryItem } = useTTSHistory();
-  const { uploadAudio } = useSupabaseStorage();
+  const { uploadAudio } = useFirebaseStorage();
 
   const handleGenerate = async () => {
     if (!text.trim()) {
@@ -66,16 +65,15 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({ className }) => {
     setIsSaving(true);
 
     try {
-      // Upload to Supabase storage
       const fileName = `speech_${selectedVoice.id}_${Date.now()}`;
-      const { success, publicUrl } = await uploadAudio(audioBlob, fileName);
+      const { success, publicUrl, filePath } = await uploadAudio(audioBlob, fileName);
 
-      if (success && publicUrl) {
-        // Save to history
+      if (success && publicUrl && filePath) {
         await addHistoryItem({
           text_content: text,
           voice_id: selectedVoice.id,
           audio_url: publicUrl,
+          audio_path: filePath,
         });
 
         toast.success("Saved to your history");
