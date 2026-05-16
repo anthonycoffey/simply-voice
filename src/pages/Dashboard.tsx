@@ -3,19 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import TextToSpeech from "@/components/TextToSpeech";
 import TTSHistory from "@/components/TTSHistory";
+import UsageBar from "@/components/UsageBar";
+import DarkModeToggle from "@/components/DarkModeToggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { LogOut, User, Mic, History } from "lucide-react";
+import { Mic, History, User } from "lucide-react";
 
 const Dashboard = () => {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = React.useState("convert");
-
-  const handleSignOut = async () => {
-    await signOut();
-    navigate("/");
-  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -31,13 +28,21 @@ const Dashboard = () => {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-sm">
-              <User className="h-4 w-4" />
-              <span>{user?.email}</span>
+            {/* Compact usage bar — hidden on small screens */}
+            <div className="hidden sm:block">
+              <UsageBar compact />
             </div>
-            <Button variant="outline" size="sm" onClick={handleSignOut}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Sign out
+
+            <DarkModeToggle />
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => navigate("/account")}
+            >
+              <User className="h-4 w-4" />
+              <span className="hidden sm:inline">Account</span>
             </Button>
           </div>
         </div>
@@ -46,13 +51,15 @@ const Dashboard = () => {
       {/* Main content */}
       <div className="flex-1 container max-w-4xl py-8">
         <div className="mb-8">
-          <h2 className="text-3xl font-bold mb-2">Welcome back!</h2>
+          <h2 className="text-3xl font-bold mb-2">
+            Welcome back{user?.displayName ? `, ${user.displayName.split(" ")[0]}` : ""}!
+          </h2>
           <p className="text-muted-foreground">
-            Convert your text to speech with our advanced AI tool.
+            Convert your text to speech with our advanced AI voices.
           </p>
         </div>
 
-        {/* Custom Tabs */}
+        {/* Tabs */}
         <div className="mb-8">
           <div className="flex space-x-1 border-b border-border/40 pb-px">
             <button
@@ -93,20 +100,18 @@ const Dashboard = () => {
         </div>
 
         {/* Tab Content */}
-        <div className={cn(
-          "w-full bg-background/30 rounded-xl border border-border/30",
-          "backdrop-blur-md shadow-lg p-6 md:p-8 relative overflow-hidden"
-        )}>
-          {/* Decorative elements */}
-          <div className="absolute -top-24 -right-24 w-48 h-48 bg-primary/5 rounded-full blur-3xl" />
-          <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-accent/30 rounded-full blur-3xl" />
+        <div
+          className={cn(
+            "w-full bg-background/30 rounded-xl border border-border/30",
+            "backdrop-blur-md shadow-lg p-6 md:p-8 relative overflow-hidden"
+          )}
+        >
+          {/* Decorative blobs */}
+          <div className="absolute -top-24 -right-24 w-48 h-48 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-accent/30 rounded-full blur-3xl pointer-events-none" />
 
           <div className="relative z-10">
-            {activeTab === "convert" ? (
-              <TextToSpeech />
-            ) : (
-              <TTSHistory />
-            )}
+            {activeTab === "convert" ? <TextToSpeech /> : <TTSHistory />}
           </div>
         </div>
       </div>
@@ -114,10 +119,17 @@ const Dashboard = () => {
       {/* Footer */}
       <footer className="border-t border-border/20 py-6">
         <div className="container text-center text-sm text-muted-foreground">
-          Created by Anthony Coffey <br />
+          Created by Anthony Coffey ·{" "}
           <a href="https://coffey.codes" className="text-primary hover:underline">
             coffey.codes
           </a>
+          {" · "}
+          <button
+            onClick={() => navigate("/pricing")}
+            className="text-primary hover:underline"
+          >
+            Pricing
+          </button>
         </div>
       </footer>
     </div>

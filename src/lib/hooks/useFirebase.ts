@@ -12,7 +12,69 @@ import {
   where,
   orderBy,
   getDocs,
+  onSnapshot,
 } from 'firebase/firestore';
+
+export const FREE_CHAR_LIMIT = 10_000;
+export const PRO_CHAR_LIMIT = 100_000;
+
+export interface SubscriptionData {
+  tier: 'free' | 'pro';
+  status: string;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  currentPeriodEnd?: string;
+}
+
+export const useSubscription = () => {
+  const { user } = useAuth();
+  const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
+  const [charsUsed, setCharsUsed] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    let ready = { sub: false, profile: false };
+    const checkReady = () => {
+      if (ready.sub && ready.profile) setLoading(false);
+    };
+
+    const currentMonth = new Date().toISOString().slice(0, 7);
+
+    const unsubSub = onSnapshot(doc(db, 'subscriptions', user.uid), (snap) => {
+      setSubscription(snap.exists() ? (snap.data() as SubscriptionData) : null);
+      ready.sub = true;
+      checkReady();
+    });
+
+    const unsubProfile = onSnapshot(doc(db, 'profiles', user.uid), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setCharsUsed(
+          data.period_month === currentMonth ? data.chars_this_month || 0 : 0
+        );
+      }
+      ready.profile = true;
+      checkReady();
+    });
+
+    return () => {
+      unsubSub();
+      unsubProfile();
+    };
+  }, [user]);
+
+  const isActive = subscription?.status === 'active';
+  const tier: 'free' | 'pro' = isActive && subscription?.tier === 'pro' ? 'pro' : 'free';
+  const limit = tier === 'pro' ? PRO_CHAR_LIMIT : FREE_CHAR_LIMIT;
+  const pctUsed = Math.min((charsUsed / limit) * 100, 100);
+
+  return { tier, limit, charsUsed, pctUsed, loading, subscription };
+};
 import {
   ref as storageRef,
   uploadBytes,
