@@ -32,3 +32,7 @@ dist-ssr
 credentials.json
 server/service-account.json
 .env
+
+# Bun — project uses npm; lock files from bun must not be committed
+bun.lockb
+*.bun
