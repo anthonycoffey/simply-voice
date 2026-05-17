@@ -30,6 +30,9 @@ app.use(
   })
 );
 
+// ─── Stripe webhook (no Firebase auth — verified by Stripe signature instead) ─
+app.post("/api/stripe/webhook", stripeWebhook);
+
 // ─── Firebase ID token auth middleware ────────────────────────────────────────
 const authenticate = async (req, res, next) => {
   const header = req.headers.authorization || "";
