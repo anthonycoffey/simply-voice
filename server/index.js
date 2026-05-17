@@ -1,5 +1,12 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 
+const admin = require('../functions/node_modules/firebase-admin');
+if (!admin.apps.length) {
+  admin.initializeApp({
+    projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'simply-voice-452800',
+  });
+}
+
 const express = require('express');
 const app = express();
 const ttsRoutes = require('./services/tts-service');
