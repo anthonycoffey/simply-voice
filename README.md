@@ -1,6 +1,6 @@
 # Simply Voice
 
-Text-to-speech web app powered by Google Cloud TTS. Authenticated users generate WAV audio from text, save clips to a personal history, and play them back later.
+Text-to-speech SaaS powered by Google Cloud TTS. Authenticated users convert text to WAV audio, save clips to personal history, and manage a monthly character quota. Paid subscribers unlock 10× the free limit via Stripe.
 
 **Live:** https://simply-voice-452800.web.app
 
@@ -8,15 +8,17 @@ Text-to-speech web app powered by Google Cloud TTS. Authenticated users generate
 
 ## Tech stack
 
-| Layer        | Tech                                                            |
-| ------------ | --------------------------------------------------------------- |
-| Frontend     | Vite, React 18, TypeScript, Tailwind, shadcn/ui, React Router 6 |
-| Auth         | Firebase Auth (Google provider)                                 |
-| Database     | Cloud Firestore                                                 |
-| File storage | Firebase Storage                                                |
-| TTS API      | Express on Firebase Cloud Functions v2 (Node 22)                |
-| TTS engine   | Google Cloud Text-to-Speech                                     |
-| Hosting      | Firebase Hosting (Vite frameworks integration)                  |
+| Layer        | Tech |
+|---|---|
+| Frontend     | Vite 6, React 18, TypeScript, Tailwind, shadcn/ui, React Router 6 |
+| Auth         | Firebase Auth (Google provider) |
+| Database     | Cloud Firestore |
+| File storage | Firebase Storage |
+| Backend API  | Express on Firebase Cloud Functions v2 (Node 22) |
+| TTS engine   | Google Cloud Text-to-Speech |
+| Hosting      | Firebase Hosting (Vite frameworks integration) |
+| Payments     | Stripe (Checkout, Customer Portal, webhooks) |
+| Secrets      | Google Cloud Secret Manager (via `firebase functions:secrets`) |
 
 GCP / Firebase project: **`simply-voice-452800`**
 
@@ -29,64 +31,92 @@ GCP / Firebase project: **`simply-voice-452800`**
                          |
                          |  signInWithPopup (Google)
                          v
-                  Firebase Auth  -----------------+
-                         |                        |
-                         |  ID token used         |
-                         |  by Firestore +        |
-                         v  Storage SDKs          |
-            +---------------------+               |
-            |   Cloud Firestore   |  rules enforce ownership by uid
-            |                     |
-            |  profiles/{uid}     |  - id, email, first_name, last_name
-            |  tts_history/{id}   |  - user_id, text, voice_id, created_at,
-            +---------------------+    audio_url, audio_path
+                  Firebase Auth  ─────────────────────┐
+                         │                             │
+                         │  ID token on every          │
+                         │  /api/** request            │
+                         v                             │
+            ┌─────────────────────┐                   │
+            │   Cloud Firestore   │  rules enforce ownership by uid
+            │                     │
+            │  profiles/{uid}     │  usage tracking (chars_this_month)
+            │  tts_history/{id}   │  saved audio clips
+            │  subscriptions/{uid}│  Stripe tier + status (backend-write only)
+            └─────────────────────┘
                          ^
-                         |  add / list / delete docs
-                         |
-                  Browser (Vite SPA)
-                         |
-                         |  upload / download / delete blobs
+                         │  upload / download / delete blobs
                          v
-            +---------------------+
-            |  Firebase Storage   |  rules enforce {uid} path prefix
-            |                     |
-            |  tts-files/{uid}/   |
-            |     {ts}_{name}.wav |
-            +---------------------+
+            ┌─────────────────────┐
+            │  Firebase Storage   │  rules enforce {uid} path prefix
+            │  tts-files/{uid}/   │
+            └─────────────────────┘
 
                   Browser (Vite SPA)
-                         |
-                         |  fetch /api/tts/voices
-                         |  fetch /api/tts/synthesize
+                         │
+                         │  Bearer <Firebase ID token>
                          v
-            +---------------------+
-            |  Firebase Hosting   |  rewrites /api/** -> ttsAPI function
-            +---------------------+
-                         |
+            ┌─────────────────────┐
+            │  Firebase Hosting   │  rewrites /api/** → ttsAPI function
+            └─────────────────────┘
+                         │
                          v
-            +---------------------+
-            |  Cloud Function     |  Express app, region us-central1
-            |  ttsAPI             |  - GET  /api/tts/voices
-            |                     |  - POST /api/tts/synthesize
-            +---------------------+
-                         |
-                         |  @google-cloud/text-to-speech (ADC)
+            ┌─────────────────────────────────────────┐
+            │  Cloud Function: ttsAPI (us-central1)   │
+            │  Express app                            │
+            │                                         │
+            │  GET  /api/tts/voices                   │
+            │  POST /api/tts/synthesize   ──► quota check → Google TTS
+            │  POST /api/stripe/create-checkout-session
+            │  POST /api/stripe/create-portal-session
+            │  POST /api/stripe/webhook   ◄── Stripe events
+            └─────────────────────────────────────────┘
+                         │
                          v
-            +---------------------+
-            |  Google Cloud TTS   |
-            +---------------------+
+            ┌─────────────────────┐
+            │  Google Cloud TTS   │
+            └─────────────────────┘
+
+                  Stripe Dashboard
+                         │
+                         │  checkout.session.completed
+                         │  customer.subscription.updated
+                         │  customer.subscription.deleted
+                         v
+            ttsAPI /api/stripe/webhook
+                         │
+                         v
+            Firestore subscriptions/{uid}   (Admin SDK write)
 ```
 
-### Request flow: "generate and save a clip"
+### Request flow: generate and save a clip
 
 1. User signs in via Google popup → `AuthProvider` exposes the `User` to the tree.
-2. `VoiceSelector` calls `GET /api/tts/voices` → `ttsAPI` → Google Cloud TTS `listVoices` → top 30 English voices.
-3. User enters text + picks voice → `TextToSpeech` calls `POST /api/tts/synthesize` → returns a WAV blob.
-4. User clicks **Save to History**:
-   - Blob uploaded to `tts-files/{uid}/{timestamp}_{name}.wav` in Firebase Storage.
-   - `getDownloadURL` produces a long-lived URL.
-   - A row is added to `tts_history` with both `audio_url` and `audio_path`.
-5. `TTSHistory` reads the user's rows via a `where('user_id','==',uid).orderBy('created_at','desc')` query and renders them through `AudioPlayer`.
+2. `VoiceSelector` calls `GET /api/tts/voices` (with ID token) → top 30 English voices ranked by quality.
+3. User enters text + picks voice → `TextToSpeech` calls `POST /api/tts/synthesize`.
+4. Backend reads `subscriptions/{uid}` and `profiles/{uid}` in parallel, checks monthly quota, returns `429` if over limit, otherwise calls Google TTS and increments `chars_this_month`.
+5. User clicks **Save to History**: blob uploaded to Firebase Storage, `tts_history` row created with `audio_url` + `audio_path`.
+6. `useSubscription` real-time listener updates the compact `UsageBar` in the dashboard header immediately.
+
+### Stripe subscription flow
+
+1. User clicks **Upgrade to Pro** on `/pricing` → `createCheckoutSession` → redirected to Stripe Checkout.
+2. On success, Stripe fires `checkout.session.completed` to the webhook endpoint.
+3. Webhook verifies signature, writes `subscriptions/{uid}` with `{ tier: 'pro', status: 'active', stripeCustomerId, stripeSubscriptionId }`.
+4. `useSubscription` listener picks up the change; UI reflects Pro tier instantly.
+5. Cancellation fires `customer.subscription.deleted` → resets to `{ tier: 'free' }`.
+
+---
+
+## Subscription tiers
+
+| | Free | Pro |
+|---|---|---|
+| Monthly character limit | 10,000 | 100,000 |
+| Price | $0 | $9.99 / month |
+| All AI voices | ✓ | ✓ |
+| Audio history | ✓ | ✓ |
+| Download as WAV | ✓ | ✓ |
+| Priority support | — | ✓ |
 
 ---
 
@@ -95,50 +125,58 @@ GCP / Firebase project: **`simply-voice-452800`**
 ```
 .
 ├── firebase.json              Hosting + Functions + Firestore + Storage config
-├── .firebaserc                Project ID alias
-├── firestore.rules            Per-uid Firestore access
-├── firestore.indexes.json     Composite index for tts_history queries
-├── storage.rules              Per-uid Storage access
-├── vite.config.ts             Dev proxy: /api -> http://localhost:3000
+├── .firebaserc                Default project: simply-voice-452800
+├── firestore.rules            Per-uid access; subscriptions read-only for owner
+├── firestore.indexes.json     Composite index: tts_history (user_id, created_at)
+├── storage.rules              Per-uid Storage access under tts-files/{uid}/**
+├── vite.config.ts             Dev proxy: /api → http://localhost:3000
 ├── .env                       Firebase web SDK config (gitignored)
 │
 ├── src/
-│   ├── main.tsx               React entry
-│   ├── App.tsx                AuthProvider + QueryClient + Router shell
+│   ├── main.tsx
+│   ├── App.tsx                ThemeProvider + ErrorBoundary + AuthProvider + Router
 │   │
 │   ├── lib/
 │   │   ├── firebase.ts        SDK init: auth, db, storage, googleProvider
-│   │   ├── auth.tsx           <AuthProvider /> + useAuth()
-│   │   ├── speechUtils.ts     fetch wrappers for /api/tts/{voices,synthesize}
+│   │   ├── auth.tsx           <AuthProvider> + useAuth()
+│   │   ├── speechUtils.ts     fetch wrappers + ApiError class + Stripe helpers
 │   │   ├── utils.ts           cn() helper
 │   │   └── hooks/
-│   │       └── useFirebase.ts useProfile, useTTSHistory, useFirebaseStorage
+│   │       └── useFirebase.ts useProfile, useTTSHistory, useFirebaseStorage,
+│   │                          useSubscription
 │   │
 │   ├── pages/
 │   │   ├── Index.tsx          Landing page
-│   │   ├── Login.tsx          "Continue with Google" button
-│   │   ├── Dashboard.tsx      Authenticated tabs: convert / history
+│   │   ├── Login.tsx          Google sign-in
+│   │   ├── Dashboard.tsx      Tabs: Text-to-Speech / History
+│   │   ├── Pricing.tsx        Free vs Pro plan cards
+│   │   ├── Account.tsx        Profile, plan badge, usage stats, Stripe portal
 │   │   └── NotFound.tsx
 │   │
 │   └── components/
-│       ├── ProtectedRoute.tsx Gates /dashboard on useAuth()
-│       ├── TextToSpeech.tsx   Generate + Save-to-History UI
-│       ├── TTSHistory.tsx     Paginated history list
-│       ├── VoiceSelector.tsx  Voice dropdown (calls /api/tts/voices)
-│       ├── AudioPlayer.tsx    Single-active-player audio control
-│       ├── AudioWaveform.tsx  Decorative waveform
+│       ├── ProtectedRoute.tsx
+│       ├── TextToSpeech.tsx   Char counter, rate/pitch sliders, 429 upgrade prompt
+│       ├── TTSHistory.tsx     History list with AudioPlayer per row
+│       ├── VoiceSelector.tsx  Voice dropdown
+│       ├── AudioPlayer.tsx    Single-active-player (AbortError-safe)
+│       ├── UsageBar.tsx       Compact + full usage bar (chars used / limit)
+│       ├── DarkModeToggle.tsx Sun/moon toggle (next-themes)
+│       ├── ErrorBoundary.tsx  Catches render errors, shows reload screen
 │       └── ui/                shadcn/ui primitives
 │
 ├── functions/                 Firebase Cloud Functions (deployed backend)
-│   ├── index.js               Mounts Express, exports ttsAPI onRequest
+│   ├── index.js               Express app, exports ttsAPI onRequest (Gen 2)
 │   └── routes/
 │       ├── getVoices.js
-│       └── synthesizeSpeech.js
+│       ├── synthesizeSpeech.js  Quota check + usage increment
+│       └── stripe/
+│           ├── createCheckoutSession.js
+│           ├── createPortalSession.js
+│           └── stripeWebhook.js  Handles subscription lifecycle events
 │
-└── server/                    Local-only Express server (dev mirror of ttsAPI)
+└── server/                    Local-only dev mirror of ttsAPI (no auth / Stripe)
     ├── index.js
-    └── services/
-        └── tts-service.js
+    └── services/tts-service.js
 ```
 
 ---
@@ -147,14 +185,16 @@ GCP / Firebase project: **`simply-voice-452800`**
 
 ### Firestore
 
-**`profiles/{uid}`** — auto-created on first sign-in.
+**`profiles/{uid}`** — created on first sign-in, updated after each synthesis.
 
 ```ts
 {
-  id: string,            // == auth uid
-  email: string,
-  first_name: string | null,
-  last_name:  string | null,
+  id:              string          // == auth uid
+  email:           string
+  first_name:      string | null
+  last_name:       string | null
+  chars_this_month: number         // running total for current period
+  period_month:    string          // "YYYY-MM" — resets on new month
 }
 ```
 
@@ -162,16 +202,28 @@ GCP / Firebase project: **`simply-voice-452800`**
 
 ```ts
 {
-  user_id:      string,  // owner uid (used by rules + index)
-  text_content: string,
-  voice_id:     string,
-  created_at:   string,  // ISO 8601
-  audio_url:    string | null,  // long-lived download URL
-  audio_path:   string | null,  // canonical storage path for delete/refresh
+  user_id:      string   // owner uid
+  text_content: string
+  voice_id:     string
+  created_at:   string   // ISO 8601
+  audio_url:    string | null  // long-lived Firebase Storage download URL
+  audio_path:   string | null  // canonical path for delete / refresh
 }
 ```
 
 Composite index: `(user_id ASC, created_at DESC)`.
+
+**`subscriptions/{uid}`** — written exclusively by the backend (Admin SDK).
+
+```ts
+{
+  tier:                 'free' | 'pro'
+  status:               string         // 'active' | 'canceled' | etc.
+  stripeCustomerId:     string
+  stripeSubscriptionId: string
+  currentPeriodEnd:     string         // ISO 8601
+}
+```
 
 ### Storage
 
@@ -186,11 +238,13 @@ gs://simply-voice-452800.firebasestorage.app/
 
 ## Security rules
 
-**Firestore** (`firestore.rules`) — a user can only read or write their own `profile` doc, and can only create / read / mutate `tts_history` rows where `user_id == request.auth.uid`.
+**Firestore** — owner-only access. `subscriptions/{uid}` is read-only for the owner; all writes come from the backend Admin SDK (which bypasses rules).
 
-**Storage** (`storage.rules`) — read/write under `tts-files/{userId}/**` requires `request.auth.uid == userId`. Anything outside that prefix is denied.
+**Storage** — read/write under `tts-files/{userId}/**` requires `request.auth.uid == userId`.
 
-The `VITE_FIREBASE_*` values in `.env` are public web-client credentials by design; the rules above are what actually protect the data.
+**API** — every `/api/**` request requires a valid Firebase ID token in `Authorization: Bearer <token>`. The `authenticate` middleware rejects unauthenticated requests with `401`.
+
+The `VITE_FIREBASE_*` values in `.env` are public web-client credentials by design; rules + token auth are what protect the data and the TTS quota.
 
 ---
 
@@ -198,16 +252,21 @@ The `VITE_FIREBASE_*` values in `.env` are public web-client credentials by desi
 
 ### Prerequisites
 
-- Node 22, npm (or bun)
+- Node 22, npm
 - `firebase-tools` (`npm i -g firebase-tools`), logged in via `firebase login`
-- `gcloud` CLI authenticated for Application Default Credentials so the local Express server can call Google Cloud TTS: `gcloud auth application-default login`
+- `gcloud` CLI with ADC for local TTS calls: `gcloud auth application-default login`
 
 ### Setup
 
 ```bash
-npm install                        # root deps (Vite + React + Firebase SDK)
-cd functions && npm install        # Cloud Functions deps
-cd ../server && npm install        # Local TTS server deps
+npm run install:all   # installs root + functions/ + server/ in one shot
+cp .env.example .env  # then fill in your Firebase web SDK values
+```
+
+Or to re-fetch SDK config from Firebase:
+
+```bash
+firebase apps:sdkconfig WEB
 ```
 
 ### Run
@@ -216,16 +275,20 @@ cd ../server && npm install        # Local TTS server deps
 npm run dev
 ```
 
-This script runs **two processes in parallel** (Linux/macOS / Git Bash on Windows):
+Starts two processes in parallel:
 
-- `vite` on **port 8080** — the SPA
-- `node server/index.js` on **port 3000** — local Express mirror of the TTS API
+| Process | Port | Purpose |
+|---|---|---|
+| `vite` | 8080 | React SPA with HMR |
+| `node server/index.js` | 3000 | Local TTS Express server (dev mirror of ttsAPI) |
 
-The Vite dev server proxies `/api/**` → `http://localhost:3000`, so the frontend talks to the local server in dev and to the deployed Cloud Function in production with zero code change.
+Vite proxies `/api/**` → `http://localhost:3000`, so the frontend uses the local server in dev and the deployed Cloud Function in production with zero code change.
 
-### Environment
+> **Note:** The local dev server does not enforce Firebase auth or Stripe quota — those only run in the deployed Cloud Function.
 
-`.env` (gitignored — already populated by `firebase apps:sdkconfig`):
+### Environment variables
+
+`.env` (gitignored):
 
 ```
 VITE_FIREBASE_API_KEY=
@@ -236,37 +299,45 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
 ```
 
-To re-fetch: `firebase apps:sdkconfig WEB --project simply-voice-452800`.
+### Cloud Function secrets (production only)
+
+Set once via the Firebase CLI — stored in Google Cloud Secret Manager:
+
+```bash
+firebase functions:secrets:set STRIPE_SECRET_KEY
+firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
+firebase functions:secrets:set STRIPE_PRO_PRICE_ID
+```
 
 ---
 
-## Deployment
+## npm scripts
 
-```bash
-# Everything
-firebase deploy --project simply-voice-452800
-
-# Pieces
-firebase deploy --only hosting               --project simply-voice-452800
-firebase deploy --only functions             --project simply-voice-452800
-firebase deploy --only firestore:rules       --project simply-voice-452800
-firebase deploy --only firestore:indexes     --project simply-voice-452800
-firebase deploy --only storage               --project simply-voice-452800
-```
-
-Hosting uses Firebase's experimental Vite frameworks integration — it runs `vite build` inside the deploy and ships `dist/`. `firebase.json` rewrites `/api/**` to the `ttsAPI` Cloud Function in `us-central1`.
-
-The project must be on the **Blaze** plan (Firebase Storage is no longer available on Spark).
+| Script | Description |
+|---|---|
+| `npm run dev` | Vite + local Express server (parallel) |
+| `npm run build` | Production build |
+| `npm run preview` | Preview production build locally |
+| `npm run lint` | ESLint |
+| `npm run deploy` | Deploy everything (hosting + functions + rules) |
+| `npm run deploy:hosting` | Hosting only |
+| `npm run deploy:functions` | Cloud Functions only |
+| `npm run deploy:rules` | Firestore rules + Storage rules only |
+| `npm run logs` | Tail live Cloud Function logs |
+| `npm run emulate` | Start Firebase emulators |
+| `npm run install:functions` | `npm install` inside `functions/` |
+| `npm run install:server` | `npm install` inside `server/` |
+| `npm run install:all` | Install all three workspaces |
 
 ---
 
 ## Backend API
 
-Both the deployed Cloud Function and the local dev server expose the same surface:
+All endpoints require `Authorization: Bearer <Firebase ID token>` except the Stripe webhook (which uses Stripe signature verification instead).
 
 ### `GET /api/tts/voices`
 
-Returns up to 30 English (`en-US`) voices, ranked by quality tier (Neural2 > Chirp3-HD > Chirp-HD > Studio > Wavenet > Standard).
+Returns up to 30 English voices ranked by quality tier (Neural2 > Chirp3-HD > Chirp-HD > Studio > Wavenet > Standard).
 
 ```json
 [
@@ -275,14 +346,16 @@ Returns up to 30 English (`en-US`) voices, ranked by quality tier (Neural2 > Chi
     "name": "Neural2-D",
     "lang": "en-US",
     "ssmlGender": "MALE",
-    "naturalSampleRateHertz": 24000
+    "naturalSampleRateHertz": 24000,
+    "type": "Neural2",
+    "tier": 1
   }
 ]
 ```
 
 ### `POST /api/tts/synthesize`
 
-Body:
+Request body:
 
 ```json
 {
@@ -294,12 +367,47 @@ Body:
 }
 ```
 
-Returns `audio/wav` (LINEAR16) directly in the response body.
+- `text` max 4,800 characters per request.
+- Returns `audio/wav` (LINEAR16) on success.
+- Returns `429` with JSON body if monthly quota exceeded:
 
-Both endpoints authenticate to Google Cloud TTS via Application Default Credentials (Cloud Functions' runtime service account in prod, local user ADC in dev).
+```json
+{
+  "error": "Monthly character limit reached",
+  "chars_used": 10000,
+  "chars_requested": 500,
+  "limit": 10000,
+  "tier": "free"
+}
+```
+
+### `POST /api/stripe/create-checkout-session`
+
+Creates a Stripe Checkout session for the Pro plan. Returns `{ url }`. Client redirects to the URL.
+
+### `POST /api/stripe/create-portal-session`
+
+Creates a Stripe Customer Portal session for the authenticated user. Returns `{ url }`.
+
+### `POST /api/stripe/webhook`
+
+Stripe webhook endpoint — uses raw body + `STRIPE_WEBHOOK_SECRET` for signature verification. Handles:
+
+- `checkout.session.completed` → writes `subscriptions/{uid}` as Pro
+- `customer.subscription.updated` → syncs status/tier
+- `customer.subscription.deleted` → resets to Free
 
 ---
 
-## Known limitations
+## Deployment
 
-- **"Audio unavailable / Retry" UI in `TTSHistory.tsx`** is vestigial from the Supabase signed-URL era. Firebase Storage download URLs are token-embedded and don't expire under normal use; the UI only triggers on genuine audio errors (deleted file, network failure). Harmless.
+`.firebaserc` sets `simply-voice-452800` as the default project, so no `--project` flag is needed.
+
+```bash
+npm run deploy            # everything
+npm run deploy:hosting    # frontend only
+npm run deploy:functions  # backend only
+npm run deploy:rules      # Firestore + Storage rules only
+```
+
+The project must be on the **Blaze (pay-as-you-go)** plan — Firebase Storage and Cloud Functions are not available on Spark.
