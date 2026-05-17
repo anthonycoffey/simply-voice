@@ -18,15 +18,17 @@ const stripeProPriceId = defineSecret("STRIPE_PRO_PRICE_ID");
 
 const app = express();
 
-// ─── Stripe webhook (must come BEFORE express.json — needs raw body) ──────────
-app.post(
-  "/api/stripe/webhook",
-  express.raw({ type: "application/json" }),
-  stripeWebhook
+// ─── JSON body parser — verify callback saves rawBody for Stripe signature ───
+// Firebase Functions Gen 2 (Cloud Run) doesn't play well with express.raw()
+// on a specific route; the body stream is consumed before route-level middleware
+// can buffer it. Capturing via the verify hook is the reliable workaround.
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
 );
-
-// ─── JSON body parser for all other routes ────────────────────────────────────
-app.use(express.json());
 
 // ─── Firebase ID token auth middleware ────────────────────────────────────────
 const authenticate = async (req, res, next) => {
