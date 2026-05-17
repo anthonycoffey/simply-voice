@@ -12,6 +12,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@google-cloud/text-to-speech": "^5.8.1"
+    "@google-cloud/text-to-speech": "^5.8.1",
+    "dotenv": "^17.4.2"
   }
 }
