@@ -8,7 +8,16 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "firebase deploy",
+    "deploy:hosting": "firebase deploy --only hosting",
+    "deploy:functions": "firebase deploy --only functions",
+    "deploy:rules": "firebase deploy --only firestore:rules,storage",
+    "logs": "firebase functions:log",
+    "emulate": "firebase emulators:start",
+    "install:functions": "npm install --prefix functions",
+    "install:server": "npm install --prefix server",
+    "install:all": "npm install && npm run install:functions && npm run install:server"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
